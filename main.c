@@ -3,7 +3,12 @@
 #include <mpi.h>
 
 /*
-El formato del archivo matrix.txt debe ser el siguiente:
+INPUT del programa:
+    - Numero de procesos a utilizar.
+    - Ruta del archivo donde se almacena la matriz a ordenar.
+
+
+El formato del archivo de entrada debe ser el siguiente:
 
 n
 a11 a12 a13 ... a1n
@@ -11,9 +16,17 @@ a21 a22 a23 ... a2n
 ..
 an1 an2 an3 ... ann
 
-El proceso 0 también recibe datos y calcula la suma local
+La matriz ordenada se escribe en el archivo sorted_matrix.txt en el directorio
+actual. En el archivo sorted_matrix.txt, todos los elementos son doubles y se
+representan con todos sus decimales.
 */
 
+/*
+    Función para imprimir una matriz
+    INPUT:
+        - A: matriz a imprimir
+        - tamMatrix: tamaño de la matriz
+*/
 void print_matrix(double *A, int tamMatrix) {
     for (int i = 0; i < tamMatrix; i++) {
         for (int j = 0; j < tamMatrix; j++) {
@@ -25,16 +38,30 @@ void print_matrix(double *A, int tamMatrix) {
 
 static double *sums;
 
-// Función de comparación para 'qsort'
+/*
+    Función de comparación para 'qsort'
+    INPUT:
+        - a: primer elemento a comparar
+        - b: segundo elemento a comparar
+*/
 int compare_sums(const void *a, const void *b) {
     int index_a = *(const int *)a;
     int index_b = *(const int *)b;
     return (sums[index_a] > sums[index_b]) - (sums[index_a] < sums[index_b]);
 }
 
+
 int main(int argc, char **argv) {
     int rank, nProc, tamMatrix;
+    if (argc != 3) {
+        fprintf(stderr, "Numero de argumentos insuficientes\n");
+        fprintf(stderr, "\tArgumento 1: Numero de procesos a utilizar\n");
+        fprintf(stderr, "\tArgumento 2: Ruta del fichero con la matriz a ordenar\n");
+        MPI_Abort(MPI_COMM_WORLD, 1);
+    }
     nProc = atoi(argv[1]);
+    char* filename = argv[2];
+
     double *A = NULL;
     double *sub_A = NULL; // Inicializar sub_A
 
@@ -51,7 +78,7 @@ int main(int argc, char **argv) {
 
     if (rank == 0){
         // Leer la matriz desde el archivo matrix.txt
-        FILE *file = fopen("matrix.txt", "r");
+        FILE *file = fopen(filename, "r");
         if (file == NULL) {
             fprintf(stderr, "Error al abrir el archivo matrix.txt\n");
             MPI_Abort(MPI_COMM_WORLD, 1);
