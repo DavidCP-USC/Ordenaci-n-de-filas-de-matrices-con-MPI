@@ -10,6 +10,8 @@ a11 a12 a13 ... a1n
 a21 a22 a23 ... a2n
 ..
 an1 an2 an3 ... ann
+
+El proceso 0 también recibe datos y calcula la suma local
 */
 
 void print_matrix(double *A, int tamMatrix) {
@@ -21,27 +23,32 @@ void print_matrix(double *A, int tamMatrix) {
     }
 }
 
-int compare(const void *a, const void *b) {
-    return (*(double *)a > *(double *)b) - (*(double *)a < *(double *)b);
+static double *sums;
+
+// Función de comparación para 'qsort'
+int compare_sums(const void *a, const void *b) {
+    int index_a = *(const int *)a;
+    int index_b = *(const int *)b;
+    return (sums[index_a] > sums[index_b]) - (sums[index_a] < sums[index_b]);
 }
 
 int main(int argc, char **argv) {
-
     int rank, nProc, tamMatrix;
     nProc = atoi(argv[1]);
     double *A = NULL;
     double *sub_A = NULL; // Inicializar sub_A
-    double *sums = NULL;
-    
+
+
     // Variables necesarias para la distribución
     int *sendcounts = NULL; // sendcounts: cantidad de datos que se envían a cada proceso
     int *displs = NULL; // displs: desplazamiento de los datos enviados a cada proceso
+    int extra_rows = 0; // Filas adicionales que se distribuyen entre los procesos
 
     // Inicializar MPI
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &nProc);
-    
+
     if (rank == 0){
         // Leer la matriz desde el archivo matrix.txt
         FILE *file = fopen("matrix.txt", "r");
@@ -60,24 +67,45 @@ int main(int argc, char **argv) {
         }
         fclose(file);
 
-        sums = (double *)malloc(tamMatrix * sizeof(double)); // Array para guardar sumasmalloc(tamMatrix * sizeof(double)); // Array para guardar sumas
+        // Array para guardar sumas
+        sums = (double *)malloc((tamMatrix) * sizeof(double));  // +1 porque el proceso 0 también envia datos (0)
+        // Inicializamos sums a -1
+        for (int i = 0; i < tamMatrix; i++) {
+            sums[i] = -1;
+        }
 
         // Calcular la distribución de filas entre procesos
-        int rows_per_process, extra_rows;
-        rows_per_process = tamMatrix / nProc;
-        extra_rows = tamMatrix % nProc;
-    
+        int rows_per_process;
+        rows_per_process = tamMatrix / (nProc - 1); // Quitamos al proceso 0
+        extra_rows = tamMatrix % (nProc - 1);
+
+
+
         sendcounts = (int *)malloc(nProc * sizeof(int));
         displs = (int *)malloc(nProc * sizeof(int));
-    
+
+
+        /////// FALTA REPARTO CICLICO DE FILAS (REORDENAR MATRIZ)
+        // TODO
+
+
+
+
+
 
         // Asignar sendcounts y displs para cada proceso
         int offset = 0;
         for (int i = 0; i < nProc; i++) {
-            if (i < extra_rows) {
+            if (i == 0) {
+                sendcounts[i] = 0; // El proceso 0 no recibe datos
+                displs[0] = 0; // Asignar el desplazamiento actual
+            }
+            else{
+                if (i < extra_rows + 1) {
                 sendcounts[i] = (rows_per_process + 1) * tamMatrix; // Un proceso recibe una fila más
-            } else {
-                sendcounts[i] = rows_per_process * tamMatrix; // Procesos reciben filas estándar
+                } else {
+                    sendcounts[i] = rows_per_process * tamMatrix; // Procesos reciben filas estándar
+                }
             }
             displs[i] = offset; // Asignar el desplazamiento actual
             offset += sendcounts[i]; // Actualizar el desplazamiento
@@ -94,7 +122,8 @@ int main(int argc, char **argv) {
     // TODO: Cambiar a MPI_Scatter
     MPI_Bcast(sendcounts, nProc, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(displs, nProc, MPI_INT, 0, MPI_COMM_WORLD);
-    
+
+    /*
     // Mostrar detalles para depuración (opcional)
     printf("--Antes de scatterv--\n");
     printf("\trank: %d\n", rank);
@@ -110,12 +139,15 @@ int main(int argc, char **argv) {
         printf("%d ", displs[i]);
     }
     printf("\n");
+    */
 
     double *local_sums;
-    sub_A = (double *)malloc(sendcounts[rank] * sizeof(double));    
+    sub_A = (double *)malloc(sendcounts[rank] * sizeof(double));
     MPI_Scatterv(A, sendcounts, displs, MPI_DOUBLE, sub_A, sendcounts[rank], MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
+    #ifdef DEBUG
     if (rank == 0) {
-        /*
+
         // Distribuir filas de A a cada proceso usando MPI_Scatterv
         printf("----- Proceso %d -----\n", rank);
         printf("Paramtros del scatterv\n");
@@ -131,84 +163,99 @@ int main(int argc, char **argv) {
             printf("%d ", displs[i]);
         }
         printf("\n");
-        */
-    }
-    else{
-        printf("--- Proceso %d, sendcount %d - displs %d ---\n", rank, *sendcounts, displs[rank]);
-        
-        // Imprimimos la matriz que le llega a cada proceso
-        printf("\tProceso %d, sub_A:", rank);
-        for (int i = 0; i < sendcounts[rank]; i++) {
-            printf(" %f", sub_A[i]);
-        }
-        printf("\n");
 
-        // Definimos local_rows basado en el tamaño que recibimos
-        int local_rows = sendcounts[rank] / tamMatrix; // Calculamos cuántas filas locales tiene este proceso
-
-        // Calcular la suma de cada fila local
-        local_sums = (double *)malloc(local_rows * sizeof(double));
-        for (int i = 0; i < local_rows; i++) {
-            local_sums[i] = 0.0;
-            for (int j = 0; j < tamMatrix; j++) {
-                local_sums[i] += sub_A[i * tamMatrix + j]; // Sumar los elementos de la fila
-            }
-        }
-        printf("\tProceso %d, suma local:", rank);
-        for (int i = 0; i < local_rows; i++) {
-            printf(" %f", local_sums[i]);
-        }
-        printf("\n");
     }
+    printf("--- Proceso %d, sendcount %d - displs %d ---\n", rank, *sendcounts, displs[rank]);
+
+    // Imprimimos la matriz que le llega a cada proceso
+    printf("\tProceso %d, sub_A:", rank);
+    for (int i = 0; i < sendcounts[rank]; i++) {
+        printf(" %f", sub_A[i]);
+    }
+    printf("\n");
+    #endif
+
+    // Definimos local_rows basado en el tamaño que recibimos
+    int local_rows = sendcounts[rank] / tamMatrix; // Calculamos cuántas filas locales tiene este proceso
+
+    // Calcular la suma de cada fila local
+    local_sums = (double *)malloc(local_rows * sizeof(double));
+    for (int i = 0; i < local_rows; i++) {
+        local_sums[i] = 0.0;
+        for (int j = 0; j < tamMatrix; j++) {
+            local_sums[i] += sub_A[i * tamMatrix + j]; // Sumar los elementos de la fila
+        }
+    }
+
+    #ifdef DEBUG
+    printf("\tProceso %d, suma local:", rank);
+    for (int i = 0; i < local_rows; i++) {
+        printf(" %f", local_sums[i]);
+    }
+    printf("\n");
+    #endif
+
     ///////// LAS SUMAS FUNCIONAN
-/*
-    // Recolectar todas las sumas en el proceso raíz (rank 0) utilizando MPI_Gather
-    MPI_Gather(local_sums, rows_per_process, MPI_DOUBLE, sums, rows_per_process, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
+    // Recolectar todas las sumas en el proceso raíz (rank 0) utilizando MPI_Gatherç
+    int rows_per_process[nProc];
+    rows_per_process[0] = 0;
+    for (int i = 1; i < nProc; i++) {
+        rows_per_process[i] = sendcounts[i] / tamMatrix;
+    }
+
+    int indiceSums[nProc]; // El 0 no se usa (envia 0 filas)
+    // int seSumo = 0; // Variable para saber si se sumo una fila extra en el anterior indiceSums
     if (rank == 0){
-        printf("Sumas totales: ");
+        indiceSums[0] = 0;
+        for (int i = 1; i < nProc; i++) {
+            indiceSums[i] = indiceSums[i-1] + rows_per_process[i-1];
+        }
+    }
+
+
+    MPI_Gatherv(local_sums, rows_per_process[rank], MPI_DOUBLE, sums, rows_per_process, indiceSums, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    #ifdef DEBUG
+    if (rank == 0){
+        printf("\t\t\t Parametros de Gatherv\n");
+        printf("\t\t\t - rows_per_process: ");
+        for (int i = 0; i < nProc; i++) {
+            printf("%d ", rows_per_process[i]);
+        }
+        printf("\n");
+        printf("\t\t\t - indiceSums: ");
+        for (int i = 0; i < nProc + 1; i++) {
+            printf("%d ", indiceSums[i]);
+        }
+        printf("\n");
+
+        printf("\t\t Proceso 0 - Sumas totales: ");
         for (int i = 0; i < tamMatrix; i++) {
             printf("%f ", sums[i]);
         }
         printf("\n");
     }
+    #endif
+
+    // SUMAS TOTALES FUNCIONAN
 
 
-
-    if (rank == 0) {
-        // Recolectar todas las sumas en el proceso raíz (rank 0)
-        int *recvcounts = NULL;
-        int *displs_sums = NULL;
-
-        recvcounts = (int *)malloc(nProc * sizeof(int));
-        displs_sums = (int *)malloc(nProc * sizeof(int));
-
-        int offset = 0;
-        for (int i = 0; i < nProc; i++) {
-            if (i < extra_rows) {
-                recvcounts[i] = (rows_per_process + 1); // Si hay filas extra, asigna una fila más
-            } else {
-                recvcounts[i] = rows_per_process; // De lo contrario, asigna el número estándar de filas
-            }
-            displs_sums[i] = offset; // Asigna el desplazamiento actual
-            offset += recvcounts[i]; // Actualiza el desplazamiento
-        }
-    }
-    /*
     if (rank == 0) {
         // Ordenar las filas según las sumas
         double *sorted_A = (double *)malloc(tamMatrix * tamMatrix * sizeof(double));
         int *order = (int *)malloc(tamMatrix * sizeof(int));
 
-        // Asignar las sumas a un arreglo de estructuras para ordenación
+        // Inicializar el arreglo 'order' para el índice de las filas
         for (int i = 0; i < tamMatrix; i++) {
             order[i] = i;
         }
 
-        // Ordenar las filas según las sumas
-        qsort(order, tamMatrix, sizeof(int), compare);
 
-        // Reorganizar la matriz A según el orden
+
+        // Ordenar las filas según las sumas usando 'qsort'
+        qsort(order, tamMatrix, sizeof(int), compare_sums);
+
+        // Reorganizar la matriz A según el orden de 'sums'
         for (int i = 0; i < tamMatrix; i++) {
             int idx = order[i];
             for (int j = 0; j < tamMatrix; j++) {
@@ -226,27 +273,29 @@ int main(int argc, char **argv) {
         }
         fclose(output_file);
 
-        // Limpiar memoria
-        free(A);
-        free(sums);
+
         free(sorted_A);
         free(order);
-        free(recvcounts);
-        free(displs_sums);
+        free(A);
+        free(sums);
+        sorted_A = NULL;
+        order = NULL;
+        A = NULL;
+        sums = NULL;
     }
 
-    // Limpiar memoria
     free(sub_A);
     free(local_sums);
-    if (rank == 0) {
-        free(sendcounts);
-        free(displs);
-    } else {
-        free(sendcounts);
-        free(displs);
-    }
-    */
-    
+    free(sendcounts);
+    free(displs);
+    sub_A = NULL;
+    local_sums = NULL;
+    sendcounts = NULL;
+    displs = NULL;
+
+
+
+
     MPI_Finalize();
     return 0;
 }
