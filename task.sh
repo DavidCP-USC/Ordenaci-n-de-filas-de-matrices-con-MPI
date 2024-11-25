@@ -1,3 +1,3 @@
 #!/bin/bash
 
-srun $1 4 matrix.txt
+srun $1 $2 matrix.txt
