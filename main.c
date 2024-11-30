@@ -8,34 +8,11 @@ INPUT del programa:
     - Ruta del archivo donde se almacena la matriz a ordenar.
     - Numero de procesos a utilizar.
 
-
-El formato del archivo de entrada debe ser el siguiente:
-
-n
-a11 a12 a13 ... a1n
-a21 a22 a23 ... a2n
-..
-an1 an2 an3 ... ann
-
 La matriz ordenada se escribe en el archivo sorted_matrix.txt en el directorio
 actual. En el archivo sorted_matrix.txt, todos los elementos son doubles y se 
 representan con todos sus decimales.
 */
 
-/*
-    Función para imprimir una matriz
-    INPUT: 
-        - A: matriz a imprimir
-        - tamMatrix: tamaño de la matriz
-*/
-void print_matrix(double *A, int tamMatrix) {
-    for (int i = 0; i < tamMatrix; i++) {
-        for (int j = 0; j < tamMatrix; j++) {
-            printf("%f ", A[i * tamMatrix + j]);
-        }
-        printf("\n");
-    }
-}
 
 static double *sums;
 
@@ -133,17 +110,6 @@ int main(int argc, char **argv) {
             }
         }
 
-        
-
-        #ifdef DEBUG
-        printf("Matriz reordenada;");
-        for (int i = 0; i < tamMatrix*tamMatrix; i++){
-            printf("%lf ", A_cyclic[i]);
-            printf("\n");
-        }
-        printf("\n");
-        #endif
-
         // Marca el inicio de la medicion del tiempo
         gettimeofday(&start, NULL);
         gettimeofday(&start2, NULL);
@@ -171,10 +137,8 @@ int main(int argc, char **argv) {
         displs = (int *)malloc(nProc * sizeof(int));
     }
 
-    // Transmitir sendcounts y displs a todos los procesos
+    // Transmitir información relevante a todos los procesos
     MPI_Bcast(&tamMatrix, 1, MPI_INT, 0, MPI_COMM_WORLD);
-    // SE LE ESTA PASANDO A TODOS LA INFO DE TODOS, CAMBIAR
-    // TODO: Cambiar a MPI_Scatter
     MPI_Bcast(sendcounts, nProc, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(displs, nProc, MPI_INT, 0, MPI_COMM_WORLD);
 
@@ -182,36 +146,6 @@ int main(int argc, char **argv) {
     double *local_sums;
     sub_A = (double *)malloc(sendcounts[rank] * sizeof(double));    
     MPI_Scatterv(A_cyclic, sendcounts, displs, MPI_DOUBLE, sub_A, sendcounts[rank], MPI_DOUBLE, 0, MPI_COMM_WORLD);
-
-    #ifdef DEBUG
-    if (rank == 0) {
-        
-        // Distribuir filas de A a cada proceso usando MPI_Scatterv
-        printf("----- Proceso %d -----\n", rank);
-        printf("Paramtros del scatterv\n");
-        printf("\tA:\n");
-        print_matrix(A, tamMatrix);
-        printf("sendcounts: ");
-        for (int i = 0; i < nProc; i++) {
-            printf("%d ", sendcounts[i]);
-        }
-        printf("\n");
-        printf("displs: ");
-        for (int i = 0; i < nProc; i++) {
-            printf("%d ", displs[i]);
-        }
-        printf("\n");
-        
-    }
-    printf("--- Proceso %d, sendcount %d - displs %d ---\n", rank, *sendcounts, displs[rank]);
-    
-    // Imprimimos la matriz que le llega a cada proceso
-    printf("\tProceso %d, sub_A:", rank);
-    for (int i = 0; i < sendcounts[rank]; i++) {
-        printf(" %f", sub_A[i]);
-    }
-    printf("\n");
-    #endif
 
     // Definimos local_rows basado en el tamaño que recibimos
     int local_rows = sendcounts[rank] / tamMatrix; // Calculamos cuántas filas locales tiene este proceso
@@ -223,17 +157,7 @@ int main(int argc, char **argv) {
         for (int j = 0; j < tamMatrix; j++) {
             local_sums[i] += sub_A[i * tamMatrix + j]; // Sumar los elementos de la fila
         }
-    }
-
-    #ifdef DEBUG
-    printf("\tProceso %d, suma local:", rank);
-    for (int i = 0; i < local_rows; i++) {
-        printf(" %f", local_sums[i]);
-    }
-    printf("\n");
-    #endif
-    
-    ///////// LAS SUMAS FUNCIONAN
+    }    
     
     // Recolectar todas las sumas en el proceso raíz (rank 0) utilizando MPI_Gatherç
     int rows_per_process[nProc];
@@ -243,7 +167,6 @@ int main(int argc, char **argv) {
     }
 
     int indiceSums[nProc]; // El 0 no se usa (envia 0 filas)
-    // int seSumo = 0; // Variable para saber si se sumo una fila extra en el anterior indiceSums
     if (rank == 0){
         indiceSums[0] = 0;
         for (int i = 1; i < nProc; i++) {
@@ -253,30 +176,6 @@ int main(int argc, char **argv) {
     
 
     MPI_Gatherv(local_sums, rows_per_process[rank], MPI_DOUBLE, sums, rows_per_process, indiceSums, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    #ifdef DEBUG
-    if (rank == 0){
-        printf("\t\t\t Parametros de Gatherv\n");
-        printf("\t\t\t - rows_per_process: ");
-        for (int i = 0; i < nProc; i++) {
-            printf("%d ", rows_per_process[i]);
-        }
-        printf("\n");
-        printf("\t\t\t - indiceSums: ");
-        for (int i = 0; i < nProc + 1; i++) {
-            printf("%d ", indiceSums[i]);
-        }
-        printf("\n");
-
-        printf("\t\t Proceso 0 - Sumas totales: ");
-        for (int i = 0; i < tamMatrix; i++) {
-            printf("%f ", sums[i]);
-        }
-        printf("\n");
-    }
-    #endif
-
-    // SUMAS TOTALES FUNCIONAN
-    
     
     if (rank == 0) {
         // Ordenar las filas según las sumas
@@ -292,14 +191,6 @@ int main(int argc, char **argv) {
 
         // Ordenar las filas según las sumas usando 'qsort'
         qsort(order, tamMatrix, sizeof(int), compare_sums);
-
-        #ifdef DEBUG
-        printf("order\n");
-        for (int i = 0; i < tamMatrix; i++) {
-            printf("%d ", order[i]);
-        }
-        printf("\n");
-        #endif
 
         // Reorganizar la matriz A según el orden de 'sums'
         for (int i = 0; i < tamMatrix; i++) {
@@ -317,7 +208,7 @@ int main(int argc, char **argv) {
         // Calcula el tiempo total del calculo excluyendo la sobrecarga
         double time = (end.tv_sec - start2.tv_sec) + (end.tv_usec - start2.tv_usec) / 1e6 - overhead;
 
-        #ifdef DEBUG
+        
         // Escribir la matriz ordenada en un archivo
         FILE *output_file = fopen("sorted_matrix.txt", "w");
         for (int i = 0; i < tamMatrix; i++) {
@@ -327,7 +218,7 @@ int main(int argc, char **argv) {
             fprintf(output_file, "\n");
         }
         fclose(output_file);
-        #endif
+        
         
 
         // Escribimos resultados de tiempos:
